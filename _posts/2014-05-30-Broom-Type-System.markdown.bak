@@ -1,0 +1,165 @@
+---
+layout: post
+title:  "Broom Type System - Related Work"
+---
+
+Broom System
+============
+
+For the sake of the discussion, we assume that system comprises of a
+set of actors, each with an Actor Id (_actId_). An actor is an
+instantiation of a class that belongs to an application. All actors
+run on the same machine sharing same physical memeory, and communicate
+by message passing. 
+
+Memory Management
+=================
+
+In Broom, memory is allocated to actors in terms of blocks called regions. Three
+kinds of regions can be identified in Broom:
+
++ Private Regions : A private region is a block of memory that is
+  private to the actor to which is was allocated. Memory for local
+  variables of methods within the actor, and data structures that are
+  private to the actor are allocated in its private regions. Actor's
+  private regions can be made to abide by the LIFO discipline, with
+  following characteristics:
+
+  1. A private stack region is allocated to an actor whenever it
+     executes a method call. Such region essentially seves as an
+     activation record for the method being called. As with activation
+     records, private stack regions form a stack of regions, where
+     regions at higher addresses in the stack (stack is assumed to
+     grow downwards) have longer lifetime than those at lower
+     addresses. A private stack region can be deallocated as soon as
+     its corresponding method call returns.
+  2. A private heap region is allocated to an actor at the beginning
+     of actor's life time, and outlives all its stack regions. Data
+     stored in actor's heap region is assumed either to persist
+     throughout the lifetime of the actor, or to be garbage collected
+     appropriately. In other words, there is no explicit way to
+     deallocate memory in private heap region.
+
++ Transferable Regions : A transferable region is a block of memory
+  that is allocated/deallocated to an actor on demand. Subsequent to
+  the allocation, the actor to which the transferable region is
+  allocated is its unique _owner_. Owner of a transferable region can
+  allocated/deallocate objects into the region. An actor can chose to
+  transfer the ownership to another actor (whence _transferable_
+  region). Subsequent to the transfer, the former is no longer allowed
+  to refer into the region. It can be observed that a transferable
+  region and the act of ownership transfer effectively model a
+  message, and the act of passing the message between different
+  actors, respectively.  Ownership transfer effectively ends the
+  lifetime of transferable region as far as its owner is concerned.
+  Alternatively, the owner of a transferable region can chose to
+  deallocate it, marking the real end of region's life time.
+  Transferable regions mark the departure from LIFO discipline among
+  lifetimes of regions. Some important observations regarding this
+  point:
+
+  1. Depending on when it is allocated and deallocated, a transferable
+     region can outlive multiple private (stack) regions of its owner,
+     or it may outlive none. Example for first case is when a
+     transferable region is allocated at the beginning of actor's
+     lifetime, updated throughout its lifetime via multiple method
+     calls, and is transferred to another actor just before the end of
+     owner's life time. An example for second case is when the
+     ownership of the transferable region is transferred to a
+     different actor almost immediately after it has been allocated
+     (i.e., allocation and ownership transfer are not separated by a
+     method call). Nevertheless, LIFO discipline is not violated in
+     both the examples, as the lifetime of regions can still be
+     represented as in form of a stack involving private regions and
+     transferable regions. However, LIFO discipline is violated when a
+     transferable region allocated in a method A, is deallocated in a
+     method B called subsequently (i.e., activation record for B
+     occurs below that of A). One consequence of this is that a
+     local variable of A that points into the transferable region
+     suddenly becomes a dangling pointer after the call to B.
+     Evidently, lifetimes of regions cannot be represented as a stack
+     in such case. 
+  2. An actor can own multiple transferable regions. Lifetimes of such
+     regions can overlap, but need not necessarily be ordered by
+     the $${outlives}$$ relation. An example of such case is when
+     two transferable regions are deallocated in different order than
+     they were allocated. Neither outlives the other in such case.
+     Pointers from one region to other become dangling when the later
+     is deallocated before the former. A more complex case is when
+     ownerships of both the allocated regions are transferred.
+     Pointers between transferable region become dangling depending on
+     whether ownerships of both are transferred to the same actor, or
+     different actors.
+
+  (I presume that) In order to avoid aforementioned complexities,
+  we impose certain restrictions on how Broom programs should deal
+  with transferable regions:
+
+  1. We require that allocations and deallocations within a transferable
+     region happen within a lexical block, during which the region is
+     $$open$$. An open region cannot be deallocated; neither can it be
+     transferred. Therefore, a call to a method made within the
+     lexical block that opens the region cannot deallocate or transfer
+     the region. There can be multiple non-overlapping lexical blocks
+     which open a given transferable region. Consequently, the entire
+     lifetime of a transferable region is split into multiple
+     incarnations, where each incarnation is in $$outlives$$ relation
+     with lifetimes of actor's private regions. Effectively, we have
+     reinstated the LIFO discipline among the lifetimes of private
+     regions and lifetimes of transferable regions. With this
+     restriction, a dangling pointer manifests straightforwardly in
+     the syntax of the program - a pointer into a transferable region
+     is dangling if its scope exeeds the scope of lexical block during
+     which the region is open.
+  2. We require that a transferable region be closed with respect to
+     pointer references. That is, a transferable region should not
+     contain pointers into other transferable regions, or even the
+     private regions of an actor. With this restriction in place, the
+     question of formuating an outlives relation among transferable
+     regions is now moot. 
+
++ Shared Regions : Shared regions are regions that are always live,
+  and shared among multiple actors. We ignore share regions for the
+  time being.
+
+Region Types
+============
+
+Ensuring memory safety is equivalent to ensuring that
+
++ There are no space leaks (or region leaks, in presence of explicitly
+  allocated regions), and
++ All memory accesses are safe. A dangling pointer (i.e., a pointer
+  into a deallocated region) is never followed.
+
+In the absence of explicitly allocated transferable regions, ensuring
+memory safety of Broom programs is only as hard as ensuring memory
+safety of C programs without `malloc` and `free`(recall that private
+heap region of an actor is either immortal, or automatically garbage
+collected). Since there are existing solutions that work well for this
+subset, we concentrate on containing unsafe interactions with memory
+that are possible due to the introduction of transferable regions.
+Such interactions can be understood by examining the following state
+machine representation of the lifetime of a transferable region:
+
+
+The above figure succinctly captures all legal interactions with
+transferable regions in a Broom program. A transition not represented
+in above state machine is illegal. For example, following are some
+illegal actions that violate memory safety:
+
+1. Any action on a region that is not yet allocated.
+2. Closing a closed region, or opening an open region.
+3. Reading from, or writing to, a closed, freed, or transferred
+   region. To state more precisely, following a pointer into closed,
+   freed, or transferred region is a violation of memory safety.
+4. Freeing, or transferring an open region.
+5. Any action on the region that is transferred, or freed.
+
+Prevention of bad behaviours is the _raison d'etre_ of type systems.
+We propose to formulate a region type system primarily to prevent
+aforementioned bad behaviours.
+
+Related Work
+=============
+

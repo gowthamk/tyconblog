@@ -1,0 +1,36 @@
+---
+layout: post
+title:  "Paper Review - LVars"
+---
+
+The papers we are interested in:
+
+1. LVars: Lattice-based data structures for deterministic parallelism,
+   FHPC'13
+2. Freeze After Writing: Quasi-Deterministic Parallel Programming with
+   LVars, POPL'14
+3. Taming the Parallel Effect Zoo: Extensible Deterministic
+   Parallelism with LVish, PLDI'14
+
+LVars
+=====
+
+A model for deterministic-by-construction parallel programming
+
+Allows multiple assigments to shared value given that they are
+monotonically increasing (wrt a user-specified lattice).
+
+Aside: this means that the merge operator, which merges concurrent
+updates, finds LUB. It follows that merge operation is commutative,
+associative and idempotent. Therefore, LVars is a model for writing
+CRDTs.
+
+Monotonic writes and "threshold reads"
+
+While there are models that encourage deterministic parallelism, few
+of them guarantee determinism for all programs written using the
+model.
+
+Verbatim - "Since pure programming with futures is a poor fit for
+producer/consumer computations, one might then turn to stateful
+deterministic parallel models" ∀ 
